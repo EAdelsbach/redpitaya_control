@@ -1,17 +1,21 @@
-# event_logger.py -- host-side driver for the FPGA event_logger core
-#
-# Continuous timestamped-event acquisition for the MCA chain:
-#   * arms the ping-pong logger, drains full buffers over CDMA (BRAM->DDR->base64)
-#   * takes ~1 Hz NTP tie-points (host_time <-> FPGA counter) so absolute time
-#     and crystal drift can be reconstructed offline (see fit_clock()).
-#
-# Record layout (64-bit little-endian word per event):
-#   bits [47:0]  timestamp  (microseconds since clear_ts)
-#   bits [62:48] energy     (15-bit peak height)
-#   bit  [63]    chb_bit    (channel-B digital input, thresholded)
+"""Host-side driver for the FPGA event_logger core.
 
-import time
-import base64
+Usage:
+    dev = redpitaya_dev("171.64.56.120", "config/mca_timestamp_1ch.json")
+    dev.base.load_bitfile()
+    # ... configure MCA chain with dev.set_register(...) as usual ...
+
+    log = EventLogger(dev)
+    log.configure(flush_ms=100)
+    log.run(duration=60, output_dir="run1")   # None = run until Ctrl+C
+
+Record layout (64-bit little-endian):
+    bits [47:0]  timestamp  (microseconds since clear_ts)
+    bits [62:48] energy     (15-bit peak height)
+    bit  [63]    chb_bit    (channel-B digital input)
+"""
+
+import os, time, signal, base64
 import numpy as np
 
 TS_BITS = 48
@@ -21,7 +25,7 @@ E_MASK  = (1 << E_BITS) - 1
 
 
 def unpack(u64):
-    """Decode raw uint64 record array -> (timestamp_us, energy, chb_bit) arrays."""
+    """Decode raw uint64 array -> (timestamp_us, energy, chb_bit)."""
     u64 = np.asarray(u64, dtype='<u8')
     ts     = (u64 & TS_MASK).astype('u8')
     energy = ((u64 >> TS_BITS) & E_MASK).astype('u2')
@@ -30,125 +34,85 @@ def unpack(u64):
 
 
 class EventLogger:
-    # ---- register offsets (see event_logger_axi_wrap.v) ----
-    R_CONTROL = 0x00
-    R_PRESC   = 0x04
-    R_FRAME   = 0x08
-    R_FLUSH   = 0x0C
-    R_BANDLO  = 0x10
-    R_BANDHI  = 0x14
-    R_CHBTHR  = 0x18
-    R_STATUS  = 0x20   # [0]ready [1]ready_buf [2]dropped_nonzero
-    R_COUNT   = 0x24
-    R_DROPPED = 0x28
-    R_TS_LO   = 0x2C
-    R_TS_HI   = 0x30
-    R_EV_LO   = 0x34
-    R_EV_HI   = 0x38
-
-    # ---- control bits ----
-    ARM      = 1 << 0
-    CLEAR_TS = 1 << 1
-    RESET    = 1 << 2
-    SNAP     = 1 << 3
-    ACK      = 1 << 4
-
-    def __init__(self, rp, base, bram_addr, cdma_addr, ddr_addr,
-                 frame_len=4096, mon='/opt/redpitaya/bin/monitor'):
+    def __init__(self, dev):
         """
-        rp        : connected redpitaya_base instance
-        base      : AXI base of event_logger regs   (e.g. 0x40004000)
-        bram_addr : AXI base of the record BRAM      (e.g. 0x41000000)
-        cdma_addr : AXI Central DMA control base     (e.g. 0x7E200000)
-        ddr_addr  : DDR scratch for CDMA landing     (e.g. 0x10000000)
-        frame_len : records per ping-pong buffer (must match the value armed)
+        dev: a connected redpitaya_dev instance whose config has an
+             'event_logger' module and an 'acquisition' section.
         """
-        self.rp        = rp
-        self.base      = base
-        self.bram_addr = bram_addr
-        self.cdma_addr = cdma_addr
-        self.ddr_addr  = ddr_addr
-        self.frame_len = frame_len
-        self.mon       = mon
-        self._ctrl     = 0   # shadow of the level control bits (arm/clear)
+        self.dev = dev
+        self.rp  = dev.base
 
-    # ------------------------------------------------------------------ config
-    def configure(self, presc=125, frame_len=None, band_low=-32768, band_high=32767,
-                  chb_thr=0, flush_ms=100):
-        """Program the logger. presc=125 -> 1 us tick @125 MHz clock.
-        Default band = full range (log every peak); narrow it to filter in HW.
-        flush_ms forces a partial-buffer swap if events are slow (0 = never)."""
+        acq = dev.config['acquisition']
+        self.bram_addr = self.rp._to_int(acq['logger_bram'])
+        self.cdma_addr = self.rp._to_int(acq['cdma_addr'])
+        self.ddr_addr  = self.rp._to_int(acq['ddr_addr'])
+        self.frame_len = acq.get('frame_len', 4096)
+        self.mon       = '/opt/redpitaya/bin/monitor'
+        self._armed    = False
+
+    def configure(self, presc=125, band_low=-1.0, band_high=1.0,
+                  chb_thr=0.0, flush_ms=100, frame_len=None):
+        """Configure the logger. Uses dev.set_register for everything."""
         if frame_len is not None:
             self.frame_len = frame_len
-        flush_ticks = int(flush_ms * 1000)  # us
-        # disarm first so config regs are quiescent
-        self._ctrl = 0
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl)
-        self.rp.write_word(self.base + self.R_PRESC,   presc & 0xFFFF)
-        self.rp.write_word(self.base + self.R_FRAME,   self.frame_len)
-        self.rp.write_word(self.base + self.R_FLUSH,   flush_ticks & 0xFFFFFFFF)
-        self.rp.write_word(self.base + self.R_BANDLO,  band_low & 0xFFFF)
-        self.rp.write_word(self.base + self.R_BANDHI,  band_high & 0xFFFF)
-        self.rp.write_word(self.base + self.R_CHBTHR,  chb_thr & 0xFFFF)
-        # readback sanity (catches wrong bitfile / address)
-        rb = self.rp.read_word(self.base + self.R_FRAME) & ((1 << 13) - 1)
-        if rb != self.frame_len:
-            raise RuntimeError(f"configure: frame_len readback {rb} != {self.frame_len} "
-                               f"(wrong bitfile or base address?)")
 
-    def _set_ctrl(self, level_bits):
-        self._ctrl = level_bits
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl)
+        self.dev.set_register('event_logger', 'arm', 0, raw=True)
+        self.dev.set_register('event_logger', 'presc', presc, raw=True)
+        self.dev.set_register('event_logger', 'frame_len', self.frame_len, raw=True)
+        self.dev.set_register('event_logger', 'flush_ticks', int(flush_ms * 1000), raw=True)
+        self.dev.set_register('event_logger', 'band_low', band_low)
+        self.dev.set_register('event_logger', 'band_high', band_high)
+        self.dev.set_register('event_logger', 'chb_threshold', chb_thr)
 
     def arm(self, clear=True):
-        bits = self.ARM | (self.CLEAR_TS if clear else 0)
-        self._set_ctrl(bits)
-        if clear:                      # release clear, keep armed
-            self._set_ctrl(self.ARM)
+        if clear:
+            self.dev.set_register('event_logger', 'clear_ts', 1, raw=True)
+            self.dev.set_register('event_logger', 'arm', 1, raw=True)
+            self.dev.set_register('event_logger', 'clear_ts', 0, raw=True)
+        else:
+            self.dev.set_register('event_logger', 'arm', 1, raw=True)
+        self._armed = True
 
     def disarm(self):
-        self._set_ctrl(0)
+        self.dev.set_register('event_logger', 'arm', 0, raw=True)
+        self._armed = False
 
-    # -------------------------------------------------------------- tie-points
     def snap_counter(self):
-        """Latch and read the 48-bit microsecond counter atomically."""
-        # pulse SNAP (rising edge), keeping current level bits
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl | self.SNAP)
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl)
-        lo = self.rp.read_word(self.base + self.R_TS_LO) & 0xFFFFFFFF
-        hi = self.rp.read_word(self.base + self.R_TS_HI) & 0xFFFF
+        """Latch and read the 48-bit microsecond counter."""
+        self.dev.set_register('event_logger', 'snap', 1, raw=True)
+        self.dev.set_register('event_logger', 'snap', 0, raw=True)
+        lo = self.dev.get_register('event_logger', 'ts_snap_lo', raw=True)
+        hi = self.dev.get_register('event_logger', 'ts_snap_hi', raw=True)
         return (hi << 32) | lo
 
     def tie_point(self):
-        """Return (host_unix_ns, fpga_counter): NTP wall clock vs FPGA counter.
-        Host time is bracketed around the snap and reported as the midpoint,
-        so the ~ms SSH latency averages out across many tie-points."""
+        """Return (host_unix_ns, fpga_counter_us)."""
         t0 = time.clock_gettime_ns(time.CLOCK_REALTIME)
         ctr = self.snap_counter()
         t1 = time.clock_gettime_ns(time.CLOCK_REALTIME)
         return (t0 + t1) // 2, ctr
 
-    # ------------------------------------------------------------------- drain
-    def drain_once(self):
-        """If a full buffer is ready, CDMA it to DDR and return its raw bytes
-        (frame_len or fewer records x 8 B), or None if nothing is ready.
-        Does NOT ack -- the buffer stays frozen until you call ack(), so the
-        caller can durably persist the data first (at-least-once semantics).
-        Poll+CDMA run as one on-target script to avoid SSH round-trips."""
-        b, c, d = self.base, self.cdma_addr, self.ddr_addr
+    def _drain_once(self):
+        """CDMA one ready buffer to host. Returns raw bytes or None.
+        Does NOT ack — caller must ack after durable write."""
+        base = self.rp._to_int(
+            self.dev.modules['event_logger']['registers']['status']['base'])
+        b = base
+        c, d = self.cdma_addr, self.ddr_addr
+        R_STATUS = 0x20
+        R_COUNT  = 0x24
         script = f"""sh -lc '
-ST=$({self.mon} $(({b}+{self.R_STATUS})))
+ST=$({self.mon} $(({b}+{R_STATUS})))
 if [ $((ST & 0x1)) -eq 0 ]; then echo NOTREADY; exit 0; fi
 BUF=$(( (ST>>1) & 1 ))
-CNT=$({self.mon} $(({b}+{self.R_COUNT})))
+CNT=$({self.mon} $(({b}+{R_COUNT})))
 N=$((CNT * 8))
 SA=$(( {self.bram_addr} + BUF * {self.frame_len} * 8 ))
-# CDMA: BRAM buffer -> DDR scratch
-{self.mon} $(({c}+0x00)) 4 >/dev/null      # soft reset
+{self.mon} $(({c}+0x00)) 4 >/dev/null
 {self.mon} $(({c}+0x00)) 0 >/dev/null
-{self.mon} $(({c}+0x18)) $SA >/dev/null     # source
-{self.mon} $(({c}+0x20)) {d} >/dev/null     # dest
-{self.mon} $(({c}+0x28)) $N >/dev/null      # BTT -> starts transfer
+{self.mon} $(({c}+0x18)) $SA >/dev/null
+{self.mon} $(({c}+0x20)) {d} >/dev/null
+{self.mon} $(({c}+0x28)) $N >/dev/null
 for i in $(seq 1 100000); do
     CST=$({self.mon} $(({c}+0x04)))
     [ $((CST & 0x2)) -ne 0 ] && break
@@ -161,79 +125,73 @@ dd if=/dev/mem bs=$N count=1 iflag=skip_bytes skip={d} 2>/dev/null | base64
             return None
         return base64.b64decode(out)
 
-    def ack(self):
-        """Free the ready buffer for reuse. Call only AFTER the drained data is
-        durably written (fsync'd), so a crash before ack re-drains that buffer
-        (a possible duplicate, removed offline) rather than losing it."""
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl | self.ACK)
-        self.rp.write_word(self.base + self.R_CONTROL, self._ctrl)
+    def _ack(self):
+        self.dev.set_register('event_logger', 'ack', 1, raw=True)
+        self.dev.set_register('event_logger', 'ack', 0, raw=True)
 
     def dropped(self):
-        return self.rp.read_word(self.base + self.R_DROPPED)
+        return self.dev.get_register('event_logger', 'dropped', raw=True)
 
-    # -------------------------------------------------------------------- main
-    def run(self, duration_s, output_dir, tiepoint_path=None, tie_period_s=1.0,
+    def run(self, duration=None, output_dir="events", tie_period_s=1.0,
             idle_sleep_s=0.001, verbose=True):
-        """Continuous acquisition into output_dir for duration_s seconds.
+        """Continuous acquisition. Ctrl+C stops gracefully.
 
-          * events -> hourly files events_YYYYMMDD_HH.bin (raw 8-B records),
-            rolled on the host's local-time hour at a drain boundary. Opened in
-            append mode so a restart resumes the same hour's file.
-          * tie-points -> one continuous CSV (default output_dir/tiepoints.csv).
-
-        Durability: each drained buffer is written + fsync'd BEFORE it is acked,
-        so a host crash re-drains the un-acked buffer next time (at-least-once).
-        Offline, load_run() concatenates the hourly files and drops any exact
-        duplicate records a restart may have produced."""
-        import os
+        duration: seconds, or None for infinite.
+        Output: output_dir/events_YYYYMMDD_HH.bin + tiepoints.csv
+        """
         os.makedirs(output_dir, exist_ok=True)
-        if tiepoint_path is None:
-            tiepoint_path = os.path.join(output_dir, "tiepoints.csv")
+        tp_path = os.path.join(output_dir, "tiepoints.csv")
 
         self.arm(clear=True)
-        t_end    = time.time() + duration_s
+
+        stop = [False]
+        prev_handler = signal.getsignal(signal.SIGINT)
+        def _handler(sig, frame):
+            stop[0] = True
+        signal.signal(signal.SIGINT, _handler)
+
+        t_end    = (time.time() + duration) if duration else float('inf')
         next_tie = time.time()
         n_rec    = 0
         cur_key  = None
         ef       = None
-        tf = open(tiepoint_path, 'a')
+
+        tf = open(tp_path, 'a')
         if tf.tell() == 0:
             tf.write("# host_unix_ns,fpga_counter_us\n"); tf.flush()
         try:
-            while time.time() < t_end:
+            while time.time() < t_end and not stop[0]:
                 if time.time() >= next_tie:
                     host_ns, ctr = self.tie_point()
                     tf.write(f"{host_ns},{ctr}\n"); tf.flush(); os.fsync(tf.fileno())
                     next_tie += tie_period_s
 
-                data = self.drain_once()
+                data = self._drain_once()
                 if data:
                     key = time.strftime("%Y%m%d_%H", time.localtime())
-                    if key != cur_key:                       # hourly rotation
-                        if ef:
-                            ef.close()
+                    if key != cur_key:
+                        if ef: ef.close()
                         ef = open(os.path.join(output_dir, f"events_{key}.bin"), 'ab')
                         cur_key = key
-                    ef.write(data); ef.flush(); os.fsync(ef.fileno())  # durable...
-                    self.ack()                                          # ...then free buffer
+                    ef.write(data); ef.flush(); os.fsync(ef.fileno())
+                    self._ack()
                     n_rec += len(data) // 8
                 else:
                     time.sleep(idle_sleep_s)
         finally:
-            if ef:
-                ef.close()
+            if ef: ef.close()
             tf.close()
             self.disarm()
+            signal.signal(signal.SIGINT, prev_handler)
+
         if verbose:
-            print(f"logged {n_rec} events, dropped={self.dropped()}")
+            print(f"Logged {n_rec} events, dropped={self.dropped()}")
         return n_rec
 
 
-# --------------------------------------------------------------- offline tools
+# ---------------------------------------------------------------- offline tools
 def fit_clock(tiepoint_path):
-    """Least-squares fit host_unix_ns = a + b*counter over the tie-points.
-    Returns (a, b): a = UNIX-ns at counter 0, b = true ns per counter tick
-    (nominally 1000 ns; deviation from 1000 IS the crystal's ppm error)."""
+    """Fit host_unix_ns = a + b*counter. Returns (a, b, ppm)."""
     data = np.loadtxt(tiepoint_path, delimiter=',', comments='#')
     ctr, host_ns = data[:, 1], data[:, 0]
     b, a = np.polyfit(ctr, host_ns, 1)
@@ -242,16 +200,12 @@ def fit_clock(tiepoint_path):
 
 
 def counter_to_unix(counter_us, a, b):
-    """Map FPGA counter values -> absolute UNIX time (seconds) using fit_clock()."""
+    """Map FPGA counter -> absolute UNIX time (seconds)."""
     return (a + b * np.asarray(counter_us, dtype=float)) / 1e9
 
 
 def load_run(events_glob):
-    """Load and concatenate the hourly event files matching events_glob
-    (e.g. 'run1/events_*.bin') in filename order, returning one uint64 array.
-    Removes exact-duplicate consecutive records that an at-least-once restart
-    may have re-appended (safe: real events are strictly time-ordered, so back
-    -to-back identical 64-bit records only occur from a re-drained buffer)."""
+    """Load hourly event files, concatenate, dedup restarts."""
     import glob
     u = [np.fromfile(f, dtype='<u8') for f in sorted(glob.glob(events_glob))]
     u = np.concatenate(u) if u else np.zeros(0, dtype='<u8')
@@ -260,17 +214,3 @@ def load_run(events_glob):
         keep[1:] = u[1:] != u[:-1]
         u = u[keep]
     return u
-
-
-if __name__ == "__main__":
-    from redpitaya_base import redpitaya_base
-    rp = redpitaya_base("171.64.56.58", "../bitfiles/mca_timestamp_1ch.bit")
-    rp.connect(); rp.load_bitfile()
-    log = EventLogger(rp, base=0x40004000, bram_addr=0x41000000,
-                      cdma_addr=0x7E200000, ddr_addr=0x10000000, frame_len=4096)
-    log.configure(presc=125, band_low=-32768, band_high=32767, chb_thr=0, flush_ms=100)
-    log.run(60, output_dir="run1", tie_period_s=1.0)          # -> run1/events_*.bin
-    a, b, ppm = fit_clock("run1/tiepoints.csv")
-    print(f"clock fit: {b:.3f} ns/tick  ({ppm:+.1f} ppm)")
-    ts, energy, chb = unpack(load_run("run1/events_*.bin"))
-    print(f"{len(ts)} events; first abs time = {counter_to_unix(ts[:3], a, b)}")
