@@ -125,6 +125,7 @@ dev.set_register("peak_detector", "base_return", 100)
 dev.set_register("peak_detector", "dead_time", 1000)
 dev.set_register("peak_detector", "n_integration", 64)
 
+
 # 4. Configure histogram
 dev.set_register("histogram", "offset", 0)
 dev.set_register("histogram", "gain", 1)
