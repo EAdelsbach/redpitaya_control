@@ -1,7 +1,8 @@
 /temp_python
-/.obsidian
+.obsidian/
 /.vscode
 *.pyc
 __pycache__/
 *.egg-info
 /dist
+.claude/
