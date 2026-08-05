@@ -6,7 +6,7 @@ import numpy as np
 
 # Connect to Red Pitaya
 RP_HOST = os.environ.get("RP_HOST", "171.64.56.120")
-dev = redpitaya_dev(RP_HOST, "config/mca_simple.json")
+dev = redpitaya_dev(RP_HOST, "config/mca_simple_1ch.json")
 dev.base.load_bitfile()
 
 # Configure signal chain

@@ -6,7 +6,7 @@ check this, [[iir2nd_direct_2ch]], [[z_control]], [[mca_simple]]
 ## Installation
 
 ```bash
-cd redpitaya_control
+
 pip install -e .
 ```
 
