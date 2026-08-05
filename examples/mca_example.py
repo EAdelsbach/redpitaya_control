@@ -3,6 +3,7 @@ from redpitaya_control import compute_coeff
 import os
 import time
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Connect to Red Pitaya
 RP_HOST = os.environ.get("RP_HOST", "171.64.56.120")
@@ -52,6 +53,11 @@ print(f"\nHistogram Summary:")
 print(f"  Total counts: {total_counts}")
 print(f"  Non-zero bins: {nonzero_bins}")
 print(f"  Peak bin: {max_bin} with {max_count} counts")
+plt.plot(histogram)
+plt.xlabel("Bin")
+plt.ylabel("Count")
+plt.title("Histogram")
+plt.show()
 
 if nonzero_bins > 0:
     active_bins = np.where(histogram > 0)[0]
