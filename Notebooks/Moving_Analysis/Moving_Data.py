@@ -14,7 +14,7 @@ from scipy.optimize import curve_fit
 from scipy.special import factorial
 
 
-runfile = '04_runfile'
+runfile = 'no_barrier_runfile'
 print(runfile)
 MAX_Q15 = 32767 / 32768
 C1 = 99.90741625
@@ -68,4 +68,4 @@ log.configure(
 )
 print(dev.get_register("peak_detector", "dead_time", raw=True))
 
-n = log.run(duration=301, output_dir=runfile)
+n = log.run(duration=601, output_dir=runfile)
