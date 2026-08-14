@@ -88,8 +88,10 @@ class EventLogger:
     def tie_point(self):
         """Return (host_unix_ns, fpga_counter_us)."""
         t0 = time.clock_gettime_ns(time.CLOCK_REALTIME)
+        # t0 = time.time_ns()
         ctr = self.snap_counter()
         t1 = time.clock_gettime_ns(time.CLOCK_REALTIME)
+        # t1 = time.time_ns()
         return (t0 + t1) // 2, ctr
 
     def _drain_once(self):

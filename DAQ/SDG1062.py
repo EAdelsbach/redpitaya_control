@@ -8,7 +8,7 @@ Dual channel. Max output amplitude 20 Vpp. 1 GSa/s sampling rate. 16-bit vertica
 
 import time
 
-# import pyvisa
+import pyvisa
 
 class SDG1062:
 
@@ -32,7 +32,7 @@ class SDG1062:
     def __exit__(self, exc_type, exc_value, exc_tb):
         self.close()
 
-    def cfg_chan_output(self, channel, freq, high=9, low=1):
+    def cfg_chan_output(self, channel, freq, high=9, low=1, wait_ready=False):
 
         if high > 10:
             raise Exception(f"High voltage value {high}V is too high to be compatible with NPC3SG piezo controller (must be <=10V).")
@@ -51,7 +51,10 @@ class SDG1062:
         self.instrument.write(f"{channel}:BSWV AMP,{amp_pp}V") # set peak-to-peak amplitude
         self.instrument.write(f"{channel}:BSWV OFST,{offset}V") # set DC offset
 
-    def cfg_chan_square(self, channel, freq, high, low, phase=0):
+        if wait_ready:
+            self.wait_until_ready()
+
+    def cfg_chan_square(self, channel, freq, high, low, phase=0, wait_ready=False):
         """
         50% duty square wave, used as a ramp-direction flag on the scope.
         Not voltage-clamped: this channel goes to the scope, not the piezo
@@ -67,12 +70,14 @@ class SDG1062:
         self.instrument.write(f"{channel}:BSWV DUTY,50")
         self.instrument.write(f"{channel}:BSWV PHSE,{phase}")
 
+        if wait_ready:
+            self.wait_until_ready()
 
     def identify(self):
         idn = self.instrument.query("*IDN?")
         print(f"Connected to: {idn.strip()}")
 
-    def set_load(self, channel, load="HZ"):
+    def set_load(self, channel, load="HZ", wait_ready=False):
         """
         Sets the output load for a channel. Amplitude and offset are referenced
         to this value, and the default is 50 ohm: driving a high-impedance
@@ -82,18 +87,27 @@ class SDG1062:
         """
         self.instrument.write(f"{channel}:OUTP LOAD,{load}")
 
-    def outputs_on(self, *channels):
+        if wait_ready:
+            self.wait_until_ready()
+
+    def outputs_on(self, *channels, wait_ready=False):
         print("Turning on outputs")
         self.instrument.write(f"C1:OUTP ON")
         time.sleep(5)
         self.instrument.write(f"C2:OUTP ON")
         time.sleep(5)
 
-    def outputs_off(self, *channels):
+        if wait_ready:
+            self.wait_until_ready()
+
+    def outputs_off(self, *channels, wait_ready=False):
         self.instrument.write(f"C1:OUTP OFF")
         time.sleep(1)
         self.instrument.write(f"C2:OUTP OFF")
         time.sleep(1)
+
+        if wait_ready:
+            self.wait_until_ready()
 
     def read_chan_settings(self, channel):
         settings = self.instrument.query(f"{channel}:BSWV?")
@@ -102,7 +116,7 @@ class SDG1062:
         output_state = self.instrument.query(f"{channel}:OUTP?")
         print(f"Output state: {output_state}")
 
-    def align_phase(self):
+    def align_phase(self, wait_ready=False):
         """
         Resets both channels' phase accumulators so their PHSE settings are
         meaningful relative to each other.
@@ -110,6 +124,13 @@ class SDG1062:
         either channel breaks the alignment and requires calling this again.
         """
         self.instrument.write("EQPHASE")
+
+        if wait_ready:
+            self.wait_until_ready()
+
+    def wait_until_ready(self):
+        ready = self.instrument.query("*OPC?")
+        return ready
 
     def close(self):
         self.instrument.close()
