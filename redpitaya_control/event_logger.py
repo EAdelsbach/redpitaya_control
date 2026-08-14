@@ -96,7 +96,7 @@ class EventLogger:
 
 
 
-        return (t0 + t1) // 2, ctr
+        # return (t0 + t1) // 2, ctr
 
     def _drain_once(self):
         """CDMA one ready buffer to host. Returns raw bytes or None.
