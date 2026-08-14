@@ -8,7 +8,7 @@ Dual channel. Max output amplitude 20 Vpp. 1 GSa/s sampling rate. 16-bit vertica
 
 import time
 
-import pyvisa
+# import pyvisa
 
 class SDG1062:
 
