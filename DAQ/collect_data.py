@@ -130,8 +130,6 @@ for velocity in velocities:
         band_high=MAX_Q15,
         flush_ms=100,
     )
-    # print(dev.get_register("peak_detector", "dead_time", raw=True))
-    os.makedirs(runfile, exist_ok=True)
 
 
     n = log.run(duration=301, output_dir=runfile)
