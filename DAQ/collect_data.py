@@ -16,7 +16,7 @@ from redpitaya_control import compute_coeff
 
 
 FLAG_PHASE = 90
-flag_low = 0
+flag_low = -1
 flag_high = 1
 
 MAX_VELOCITY = 1 # mm/s
