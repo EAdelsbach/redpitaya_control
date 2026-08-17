@@ -28,9 +28,7 @@ freq = 1 / period
 RP_HOST = os.environ.get("RP_HOST", "171.64.56.120")
 dev = redpitaya_dev(RP_HOST, "config/mca_timestamp_1ch_working.json")
 dev.base.load_bitfile()
-dev.set_register('event_logger', 'reset', 1, raw=True)
-time.sleep(0.1)
-dev.set_register('event_logger', 'reset', 0, raw=True)
+
 
 MAX_Q15 = 32767 / 32768
 
@@ -96,7 +94,9 @@ for velocity in velocities:
     print(f'currently running{runfile}')
     
 
-
+    dev.set_register('event_logger', 'reset', 1, raw=True)
+    time.sleep(0.1)
+    dev.set_register('event_logger', 'reset', 0, raw=True)
     
     # Signal chain
     dev.set_all_registers(
@@ -130,7 +130,9 @@ for velocity in velocities:
         band_high=MAX_Q15,
         flush_ms=100,
     )
-    print(dev.get_register("peak_detector", "dead_time", raw=True))
+    # print(dev.get_register("peak_detector", "dead_time", raw=True))
+    os.makedirs(runfile, exist_ok=True)
+
 
     n = log.run(duration=301, output_dir=runfile)
 
