@@ -32,6 +32,7 @@ dev.set_register('event_logger', 'reset', 1, raw=True)
 time.sleep(0.1)
 dev.set_register('event_logger', 'reset', 0, raw=True)
 
+MAX_Q15 = 32767 / 32768
 
 
 velocities = np.round(np.linspace(0, 0.3, 31), 2)
@@ -125,11 +126,13 @@ for velocity in velocities:
     # Configure before arming.
     log = EventLogger(dev)
     log.configure(
+        band_low=0.0,
+        band_high=MAX_Q15,
         flush_ms=100,
     )
     print(dev.get_register("peak_detector", "dead_time", raw=True))
 
-    n = log.run(duration=601, output_dir=runfile)
+    n = log.run(duration=301, output_dir=runfile)
 
 
 with SDG1062() as func_gen:
