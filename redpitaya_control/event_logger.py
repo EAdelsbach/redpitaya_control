@@ -6,31 +6,47 @@ Usage:
     # ... configure MCA chain with dev.set_register(...) as usual ...
 
     log = EventLogger(dev)
-    log.configure(flush_ms=100)
+    log.configure(flush_ms=100, veto_ms=100)
     log.run(duration=60, output_dir="run1")   # None = run until Ctrl+C
 
 Record layout (64-bit little-endian):
-    bits [47:0]  timestamp  (microseconds since clear_ts)
-    bits [62:48] energy     (15-bit peak height)
-    bit  [63]    chb_bit    (channel-B digital input)
+    bits [46:0]  timestamp  (microseconds since clear_ts; 2^47 us = 4.5 yr)
+    bits [61:47] energy     (15-bit peak height)
+    bit  [62]    chb_bit    (channel-B digital input)
+    bit  [63]    veto       (event fell inside a chB-transition veto window)
+
+NOTE: the timestamp is 47 bits, not 48 -- bit 63 was given to the veto tag.
+Files written by an older 48-bit build are NOT readable by this parser.
+Vetoed events are logged, not discarded; filter them offline:
+    ts, energy, chb, veto = unpack(load_run("run1/events_*.bin"))
+    good = veto == 0
+    ts, energy, chb = ts[good], energy[good], chb[good]
 """
 
 import os, time, signal, base64
 import numpy as np
 
-TS_BITS = 48
-E_BITS  = 15
-TS_MASK = (1 << TS_BITS) - 1
-E_MASK  = (1 << E_BITS) - 1
+TS_BITS  = 47
+E_BITS   = 15
+CHB_BIT  = 62
+VETO_BIT = 63
+TS_MASK  = (1 << TS_BITS) - 1
+E_MASK   = (1 << E_BITS) - 1
 
 
 def unpack(u64):
-    """Decode raw uint64 array -> (timestamp_us, energy, chb_bit)."""
+    """Decode raw uint64 array -> (timestamp_us, energy, chb_bit, veto_bit).
+
+    veto=1 marks an event that arrived inside a chB-transition veto window.
+    Such events are recorded, not dropped -- discard them downstream if the
+    analysis requires a clean chB state.
+    """
     u64 = np.asarray(u64, dtype='<u8')
     ts     = (u64 & TS_MASK).astype('u8')
     energy = ((u64 >> TS_BITS) & E_MASK).astype('u2')
-    chb    = ((u64 >> 63) & 1).astype('u1')
-    return ts, energy, chb
+    chb    = ((u64 >> CHB_BIT) & 1).astype('u1')
+    veto   = ((u64 >> VETO_BIT) & 1).astype('u1')
+    return ts, energy, chb, veto
 
 
 class EventLogger:
@@ -51,7 +67,7 @@ class EventLogger:
         self._armed    = False
 
     def configure(self, presc=125, band_low=-1.0, band_high=1.0,
-                  chb_thr=0.0, flush_ms=100, frame_len=None):
+                  chb_thr=0.0, flush_ms=100, veto_ms=0, frame_len=None):
         """Configure the logger. Uses dev.set_register for everything."""
         if frame_len is not None:
             self.frame_len = frame_len
@@ -63,8 +79,16 @@ class EventLogger:
         self.dev.set_register('event_logger', 'band_low', band_low)
         self.dev.set_register('event_logger', 'band_high', band_high)
         self.dev.set_register('event_logger', 'chb_threshold', chb_thr)
+        # chB-transition veto window, ms (0 = off, max 65535).
+        # Write it before arming: the chb_threshold write above moves the
+        # comparator and would otherwise look like a chB edge.
+        if not 0 <= int(veto_ms) <= 0xFFFF:
+            raise ValueError(f"veto_ms must be 0..65535 ms, got {veto_ms}")
+        self.dev.set_register('event_logger', 'veto_ms', int(veto_ms), raw=True)
 
     def arm(self, clear=True):
+        self.dev.set_register('event_logger', 'reset', 1, raw=True)
+        self.dev.set_register('event_logger', 'reset', 0, raw=True)
         if clear:
             self.dev.set_register('event_logger', 'clear_ts', 1, raw=True)
             self.dev.set_register('event_logger', 'arm', 1, raw=True)
@@ -78,7 +102,7 @@ class EventLogger:
         self._armed = False
 
     def snap_counter(self):
-        """Latch and read the 48-bit microsecond counter."""
+        """Latch and read the 47-bit microsecond counter."""
         self.dev.set_register('event_logger', 'snap', 1, raw=True)
         self.dev.set_register('event_logger', 'snap', 0, raw=True)
         lo = self.dev.get_register('event_logger', 'ts_snap_lo', raw=True)
