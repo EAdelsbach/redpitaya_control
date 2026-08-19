@@ -25,10 +25,10 @@
                             "timebase_module": 16e-9
                         },
             "registers": {
-                        "b0":           {"base": "0x40000000", "offset":  0, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
-                        "b1":           {"base": "0x40000000", "offset":  4, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
-                        "a1":           {"base": "0x40000000", "offset":  8, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
-                        "reset":        {"base": "0x40000000", "offset": 24, "msb": 0,  "lsb": 0, "signed": false, "log_scale": 0}
+                        "b0":           {"base": "0x40001000", "offset":  0, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
+                        "b1":           {"base": "0x40001000", "offset":  4, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
+                        "a1":           {"base": "0x40001000", "offset":  8, "msb": 24, "lsb": 0, "signed": true,  "log_scale": 24},
+                        "reset":        {"base": "0x40001000", "offset": 24, "msb": 0,  "lsb": 0, "signed": false, "log_scale": 0}
                         }
         },
 
@@ -44,16 +44,16 @@
                             "timebase_module": 16e-9
                         },
             "registers": {
-                        "h0":           {"base": "0x40001000", "offset":  0, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h1":           {"base": "0x40001000", "offset":  4, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h2":           {"base": "0x40001000", "offset":  8, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h3":           {"base": "0x40001000", "offset": 12, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h4":           {"base": "0x40001000", "offset": 16, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h5":           {"base": "0x40001000", "offset": 20, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h6":           {"base": "0x40001000", "offset": 24, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h7":           {"base": "0x40001000", "offset": 28, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "h8":           {"base": "0x40001000", "offset": 32, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
-                        "reset":        {"base": "0x40001000", "offset": 36, "msb": 0, "lsb": 0, "signed": false, "log_scale": 0}
+                        "h0":           {"base": "0x40000000", "offset":  0, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h1":           {"base": "0x40000000", "offset":  4, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h2":           {"base": "0x40000000", "offset":  8, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h3":           {"base": "0x40000000", "offset": 12, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h4":           {"base": "0x40000000", "offset": 16, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h5":           {"base": "0x40000000", "offset": 20, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h6":           {"base": "0x40000000", "offset": 24, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h7":           {"base": "0x40000000", "offset": 28, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "h8":           {"base": "0x40000000", "offset": 32, "msb": 7, "lsb": 0, "signed": true,  "log_scale": 7},
+                        "reset":        {"base": "0x40000000", "offset": 36, "msb": 0, "lsb": 0, "signed": false, "log_scale": 0}
                         }
         },
 
