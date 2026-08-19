@@ -48,6 +48,14 @@ def unpack(u64):
     veto   = ((u64 >> VETO_BIT) & 1).astype('u1')
     return ts, energy, chb, veto
 
+def unpack_legacy(raw):
+    """Decode legacy 64-bit records as timestamp, energy, and channel-B state."""
+    raw = np.asarray(raw, dtype="<u8")
+    ts_us = raw & ((1 << 48) - 1)
+    energy = (raw >> 48) & ((1 << 15) - 1)
+    chb = (raw >> 63) & 1
+    return ts_us, energy.astype("u2"), chb.astype("u1")
+
 
 class EventLogger:
     def __init__(self, dev):
@@ -111,21 +119,9 @@ class EventLogger:
 
     def tie_point(self):
         """Return (host_unix_ns, fpga_counter_us)."""
-        # t0 = time.clock_gettime_ns(time.CLOCK_REALTIME)
-        # Cross-platform fallback check:
-        if hasattr(time, 'clock_gettime_ns') and hasattr(time, 'CLOCK_REALTIME'):
-            t0 = time.clock_gettime_ns(time.CLOCK_REALTIME)
-        else:
-            t0 = time.time_ns()
-
+        t0 = time.time_ns()
         ctr = self.snap_counter()
-        # Cross-platform fallback check:
-        if hasattr(time, 'clock_gettime_ns') and hasattr(time, 'CLOCK_REALTIME'):
-            t1 = time.clock_gettime_ns(time.CLOCK_REALTIME)
-        else:
-            t1 = time.time_ns()
-
-        # t1 = time.clock_gettime_ns(time.CLOCK_REALTIME)
+        t1 = time.time_ns()
         return (t0 + t1) // 2, ctr
 
     def _drain_once(self):
