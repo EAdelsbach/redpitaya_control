@@ -1,6 +1,6 @@
 {
     "bitfile": "bitfiles/mca_timestamp_1ch.bit",
-    "description": "MCA chain (IIR1 -> FIR9 -> Peak Detector -> Histogram) plus continuous event logger with microsecond timestamps and channel-B tag.",
+    "description": "MCA chain (IIR1 -> FIR9 -> Peak Detector -> Histogram) plus continuous event logger with 47-bit microsecond timestamps, channel-B tag and chB-transition veto tag.",
     "build_date": "2026-08-03",
 
     "acquisition": {
@@ -112,8 +112,9 @@
 
         "event_logger": {
             "type": "event_logger",
-            "settings": {   "TS_WIDTH": 48,
+            "settings": {   "TS_WIDTH": 47,
                             "E_WIDTH": 15,
+                            "VETO_WIDTH": 16,
                             "REC_WIDTH": 64,
                             "ADDR_BITS": 13,
                             "buffers": 2,
@@ -132,15 +133,16 @@
                         "band_low":      {"base": "0x40004000", "offset": 16, "msb": 15, "lsb": 0, "signed": true,  "log_scale": 15},
                         "band_high":     {"base": "0x40004000", "offset": 20, "msb": 15, "lsb": 0, "signed": true,  "log_scale": 15},
                         "chb_threshold": {"base": "0x40004000", "offset": 24, "msb": 15, "lsb": 0, "signed": true,  "log_scale": 15},
+                        "veto_ms":       {"base": "0x40004000", "offset": 28, "msb": 15, "lsb": 0, "signed": false, "log_scale": 0},
                         "status":        {"base": "0x40004000", "offset": 32, "msb": 31, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
                         "ready":         {"base": "0x40004000", "offset": 32, "msb":  0, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
                         "ready_buf":     {"base": "0x40004000", "offset": 32, "msb":  1, "lsb": 1, "signed": false, "log_scale": 0, "readonly": true},
                         "ready_count":   {"base": "0x40004000", "offset": 36, "msb": 12, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
                         "dropped":       {"base": "0x40004000", "offset": 40, "msb": 31, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
                         "ts_snap_lo":    {"base": "0x40004000", "offset": 44, "msb": 31, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
-                        "ts_snap_hi":    {"base": "0x40004000", "offset": 48, "msb": 15, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
+                        "ts_snap_hi":    {"base": "0x40004000", "offset": 48, "msb": 14, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
                         "events_lo":     {"base": "0x40004000", "offset": 52, "msb": 31, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true},
-                        "events_hi":     {"base": "0x40004000", "offset": 56, "msb": 15, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true}
+                        "events_hi":     {"base": "0x40004000", "offset": 56, "msb": 14, "lsb": 0, "signed": false, "log_scale": 0, "readonly": true}
                         }
         }
     }
